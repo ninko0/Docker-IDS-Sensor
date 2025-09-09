@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  zeek:
+    image: zeek/zeek
+    container_name: zeek
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    working_dir: /zeek
+    volumes:
+      - ./scripts:/zeek/scripts
+      - ./logs:/zeek
+    command: >
+      zeek -i eno1 /zeek/scripts/main.zeek -C
