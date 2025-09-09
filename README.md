@@ -1,4 +1,4 @@
-# Docker-IDS-Sensor (Professional README)
+# Docker-IDS-Sensor 
 
 > **Purpose.** A reproducible, Docker‑based **network security lab** that brings together:
 >
