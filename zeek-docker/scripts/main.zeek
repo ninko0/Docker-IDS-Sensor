@@ -1,1 +1,1 @@
-
+@load ./canary.zeek
