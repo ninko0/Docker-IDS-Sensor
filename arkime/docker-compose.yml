@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+
+  arkime-init:
+    image: ghcr.io/arkime/arkime/arkime:v5-latest
+    container_name: arkime-init
+    network_mode: host
+    restart: "no"
+    volumes:
+      - ./config.ini:/opt/arkime/etc/config.ini
+    entrypoint: ["/bin/bash","-lc"]
+    command: >
+      echo 'INIT\n' | /opt/arkime/db/db.pl http://localhost:9200 init
+
+
+  arkime-viewer:
+    image: ghcr.io/arkime/arkime/arkime:v5-latest
+    container_name: arkime-viewer
+    network_mode: host
+    depends_on:
+      - arkime-init
+    volumes:
+      - ./config.viewer.ini:/opt/arkime/etc/config.ini
+      - ./pcap:/pcap
+    working_dir: /opt/arkime/viewer
+    command: /opt/arkime/bin/node /opt/arkime/viewer/viewer.js -c /opt/arkime/etc/config.ini
+
+
+  arkime-capture:
+    image: ghcr.io/arkime/arkime/arkime:v5-latest
+    container_name: arkime-capture
+    network_mode: host
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+      - SYS_RESOURCE
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ./config.capture.ini:/opt/arkime/etc/config.ini
+      - ./pcap:/pcap
+      - ./geoip:/opt/arkime/etc/geoip
+      - ./parsers:/opt/arkime/etc/parsers
+    command: /opt/arkime/bin/capture --host sensor-test
