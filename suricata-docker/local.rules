@@ -1,0 +1,17 @@
+ ---------- Canary .216 (SSH/HTTP/FTP) ----------
+# Alerte dès le SYN (tentative)
+alert tcp any any -> 192.168.69.216 22 (msg:"HONEY SSH SYN to canary-216:22"; flow:to_server; flags:S; classtype:attempted-recon; sid:2162201; rev:1; metadata:service ssh,canary; )
+alert tcp any any -> 192.168.69.216 80 (msg:"HONEY HTTP SYN to canary-216:80"; flow:to_server; flags:S; classtype:attempted-recon; sid:2168001; rev:1; metadata:service http,canary; )
+alert tcp any any -> 192.168.69.216 21 (msg:"HONEY FTP SYN to canary-216:21"; flow:to_server; flags:S; classtype:attempted-recon; sid:2162101; rev:1; metadata:service ftp,canary; )
+
+# Alerte quand la session est établie et reconnue par l'app-layer (moins de bruit)
+alert tcp any any -> 192.168.69.216 22 (msg:"HONEY SSH established to canary-216"; flow:to_server,established; app-layer-protocol:ssh; classtype:attempted-recon; sid:2162202; rev:1; metadata:service ssh,canary; )
+alert tcp any any -> 192.168.69.216 80 (msg:"HONEY HTTP established to canary-216"; flow:to_server,established; app-layer-protocol:http; classtype:attempted-recon; sid:2168002; rev:1; metadata:service http,canary; )
+alert tcp any any -> 192.168.69.216 21 (msg:"HONEY FTP control established to canary-216"; flow:to_server,established; app-layer-protocol:ftp; classtype:attempted-recon; sid:2162102; rev:1; metadata:service ftp,canary; )
+
+# ---------- Canary .217 (HTTP/MySQL) ----------
+alert tcp any any -> 192.168.69.217 80 (msg:"HONEY HTTP SYN to canary-host:80"; flow:to_server; flags:S; classtype:attempted-recon; sid:2178001; rev:1; metadata:service http,canary; )
+alert tcp any any -> 192.168.69.217 3306 (msg:"HONEY MySQL SYN to canary-host:3306"; flow:to_server; flags:S; classtype:attempted-recon; sid:21733061; rev:1; metadata:service mysql,canary; )
+
+alert tcp any any -> 192.168.69.217 80 (msg:"HONEY HTTP established to canary-host"; flow:to_server,established; app-layer-protocol:http; classtype:attempted-recon; sid:2178002; rev:1; metadata:service http,canary; )
+alert tcp any any -> 192.168.69.217 3306 (msg:"HONEY MySQL established to canary-host"; flow:to_server,established; app-layer-protocol:mysql; classtype:attempted-recon; sid:21733062; rev:1; metadata:service mysql,canary; )

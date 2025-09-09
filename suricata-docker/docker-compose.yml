@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: suricata
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./suricata.yaml:/etc/suricata/suricata.yaml
+      - ./logs/:/var/log/suricata
+      - ./local.rules:/var/lib/suricata/rules/local.rules
+    command: -i eno1 -v
