@@ -1,6 +1,6 @@
 # What is this project ?
 
-### It's just a fast deployment of IDS sensor and packet captur and HoneyPot in docker
+### It's just a fast deployment of IDS sensor, packet captur and HoneyPot in docker
 ### It's based on Suricata , Zeek for IDS / Arkime for packet captur / Opencanary for honeyPot
 
 ##### I did a start script because it is easier for me but you can just use docker-compose for eatch files.
