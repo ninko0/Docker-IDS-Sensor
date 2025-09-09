@@ -1,88 +1,294 @@
-# IDS, Honeypot, and Packet Capture Deployment with Docker
+# Docker-IDS-Sensor (Professional README)
 
-This project provides a set of Docker configurations to quickly deploy a network security monitoring stack. It includes an Intrusion Detection System (IDS), a network analysis framework, a packet capture tool, and a honeypot.
-
-**Components:**
-*   **IDS:** [Suricata](https://suricata.io/)
-*   **Network Analyzer:** [Zeek](https://zeek.org/) (formerly Bro)
-*   **Packet Capture & Viewer:** [Arkime](https://arkime.com/) (formerly Moloch)
-*   **Honeypot:** [OpenCanary](https://github.com/thinkst/opencanary)
+> **Purpose.** A reproducible, Docker‑based **network security lab** that brings together:
+>
+> - **Suricata** and **Zeek** for IDS/NSM
+> - **Arkime** for full‑packet capture & session search (backed by OpenSearch/Elasticsearch)
+> - **OpenCanary** as a low‑interaction honeypot
+>
+> This repository is intentionally **not** a turnkey product. It’s a **PoC/lab scaffold** for practitioners who are comfortable editing Docker and tool configs. Use it to stand up a sensor stack quickly, validate detections, and prototype data flows.
 
 ---
 
-## ⚠️ Security Analysis & Important Warnings
+## Contents
 
-This repository is intended as a template for rapid deployment and **is not a production-ready solution**. A thorough review of all configurations is essential before deployment.
+- [What You Get](#what-you-get)
+- [Repository Layout](#repository-layout)
+- [Reference Architecture](#reference-architecture)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Configuration Checklist](#configuration-checklist)
+- [Operations](#operations)
+- [Security Hardening Notes](#security-hardening-notes)
+- [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
+- [Credits & License](#credits--license)
 
-*   **Critical: Missing Honeypot Configuration:** The `init-and-start_IDS_Honeypot.sh` script attempts to start OpenCanary using a `docker-compose.yml` file that is **missing** from the `opencanary-docker/` directory. The honeypot component is therefore **non-functional** out of the box.
+---
 
-*   **High-Risk: Default Arkime Password:** The startup script sets a default password for the Arkime `admin` user to `'MonMotdepasse'`. This password **must be changed immediately** during setup to prevent unauthorized access.
+## What You Get
 
-*   **High-Risk: Hardcoded Configuration:** Numerous critical values are hardcoded across multiple files. These include network interfaces, IP addresses, and service URLs. Deploying this without modification will likely fail and could create security vulnerabilities.
+**Components**
+
+- **Suricata** — signature‑based IDS, generates `eve.json`/alerts and optional PCAPs.
+- **Zeek** — protocol‑aware network telemetry (e.g., `conn.log`, `dns.log`, `http.log`, etc.).
+- **Arkime** — full‑packet capture with session indexing and a web UI (“viewer”); requires **OpenSearch/Elasticsearch** as the datastore.
+- **OpenCanary** — honeypot services (e.g., SSH/FTP/HTTP) to attract and alert on opportunistic scans.
+
+**Networking**
+
+- Optional **macvlan** network for sensor interfaces. This keeps management traffic separate from capture/production segments and helps when attaching the stack to SPAN/TAP or dedicated sensor VLANs.
+
+> The original README highlights macvlan parameters to tailor in the start script and per‑tool interface settings. The Arkime setup is split into **init**, **capture**, and **viewer** containers and expects an OpenSearch/Elasticsearch backend.
+
+---
+
+## Repository Layout
+
+```
+Docker-IDS-Sensor/
+├─ arkime-docker/          # Arkime init, capture, and viewer containers; config.ini and compose
+├─ opencanary-docker/      # OpenCanary container with .opencanary.conf and compose
+├─ suricata-docker/        # Suricata assets (suricata.yaml, local.rules, compose)
+├─ zeek-docker/            # Zeek assets (scripts/, zeekctl.cfg or command args, compose)
+├─ init-and-start_IDS_Honeypot.sh  # Helper script to create macvlan and start stacks
+└─ README.md               # Project overview and guidance
+```
+
+> Tip: You **can** ignore the helper script and start each component with `docker compose` from its directory once you’ve edited configs.
+
+---
+
+## Reference Architecture
+
+```mermaid
+flowchart LR
+  subgraph L2["Sensor L2 (SPAN/TAP or VLAN)"]
+    linkStyle default stroke-width:1px
+    Z[Zeek] <--> S[Suricata]
+    S -->|Alerts| SIEM[(SIEM / Log Store)]
+    Z -->|Telemetry| SIEM
+    C[Arkime Capture] -->|pcap + session meta| D[(OpenSearch/Elasticsearch)]
+    V[Arkime Viewer] --> D
+  end
+
+  H[OpenCanary] -->|Events| SIEM
+  Admin[(Ops/Admin)] -->|HTTPS| V
+
+  classDef svc fill:#f6f8fa,stroke:#999;
+  class Z,S,C,V,H svc;
+```
+
+**Key ideas**
+
+- **Zeek** and **Suricata** observe the same traffic; Suricata raises signature alerts, Zeek yields rich, structured logs.
+- **Arkime** stores/serves PCAPs + session metadata in **OpenSearch/Elasticsearch** and exposes a **web viewer**.
+- **OpenCanary** is optional but useful to validate alerting and to surface low‑noise findings in a lab.
 
 ---
 
 ## Prerequisites
 
-*   **Software:** Docker and Docker Compose must be installed on your system.
-*   **Knowledge:** A solid understanding of Docker, computer networking (subnets, gateways, network interfaces), and the basics of the security tools listed above is required.
-*   **SIEM:** Arkime requires a connection to an Elasticsearch or OpenSearch instance. The configuration defaults to `http://localhost:9200`. You must provide your own SIEM or use the commented-out OpenSearch `docker-compose` file (not included in this repository) as a starting point.
+- Linux host (bare‑metal or VM) with **Docker Engine** and **Docker Compose v2**.
+- One or more NICs you can dedicate to **capture** (SPAN/TAP preferred) or use **macvlan** on a sensor VLAN.
+- **Disk space**: PCAPs and indices grow quickly (size accordingly).
+- **OpenSearch/Elasticsearch** reachable from Arkime (or run it locally in a separate stack, if desired).
 
 ---
 
-## Configuration
+## Quick Start
 
-Before you begin, you must customize the configuration files to match your environment.
+> ⚠️ **Edit configs first.** This project assumes you’ll set proper interfaces, IPs, and datastore endpoints before starting.
 
-### 1. Network Configuration
+### 1) Clone
 
-The script creates a `macvlan` network for the honeypot. You must edit `init-and-start_IDS_Honeypot.sh` and set the correct values for your network:
+```bash
+git clone https://github.com/ninko0/Docker-IDS-Sensor.git
+cd Docker-IDS-Sensor
+```
 
-*   `--subnet`: The subnet for the macvlan network (e.g., `192.168.1.0/24`).
-*   `--gateway`: The gateway for the macvlan network (e.g., `192.168.1.1`).
-*   `parent`: Your host's primary network interface (e.g., `eth0`, `ens192`).
+### 2) (Optional) Create a macvlan network
 
-### 2. Service-Specific Configuration
+Replace variables with values appropriate for your environment (sensor VLAN/subnet and host parent NIC).
 
-You must change the network interface name (default: `eno1`) in the following files:
+```bash
+PARENT_IF=enp3s0         # Host NIC connected to SPAN/TAP or sensor VLAN
+SUBNET=192.168.50.0/24
+GATEWAY=192.168.50.1
+NET_NAME=ids_macvlan
 
-*   `suricata-docker/docker-compose.yml`
-*   `zeek-docker/docker-compose.yml`
-*   `arkime-docker/config.capture.ini`
-*   `arkime-docker/config.viewer.ini`
+docker network create -d macvlan \
+  --subnet="$SUBNET" --gateway="$GATEWAY" \
+  -o parent="$PARENT_IF" "$NET_NAME"
+```
 
-### 3. Arkime Configuration
+> If you use the provided `init-and-start_IDS_Honeypot.sh`, ensure the macvlan parameters in the script match your environment.
 
-*   **SIEM URL:** Change the `elasticsearch` URL in the following files to point to your Elasticsearch or OpenSearch instance:
-    *   `arkime-docker/docker-compose.yml` (in the `arkime-init` service command)
-    *   `arkime-docker/config.capture.ini`
-    *   `arkime-docker/config.viewer.ini`
-*   **Sensor Name:** In `arkime-docker/docker-compose.yml`, change the capture host name from `sensor-test` to a name that fits your environment.
+### 3) Configure each component
 
-### 4. Suricata Custom Rules
+Follow the [Configuration Checklist](#configuration-checklist).
 
-*   Edit `suricata-docker/local.rules` to add your own custom rules. The default rule contains a placeholder IP that should be changed.
+### 4) Start the stack
 
-### 5. Zeek Custom Scripts
+You can either use the helper script _or_ start per‑component with Compose:
 
-*   Review the scripts in `zeek-docker/scripts/`. The `canary.zeek` script contains a hardcoded IP address that needs to be updated.
+```bash
+# Helper script (all‑in‑one bootstrap)
+bash ./init-and-start_IDS_Honeypot.sh
+
+# OR: Start each component after editing its compose file
+# (from within each component directory)
+docker compose up -d
+```
+
+### 5) Smoke‑test
+
+- Generate traffic across the monitored interface(s).
+- Confirm **Suricata** writes `eve.json` and alerts.
+- Confirm **Zeek** logs populate (`conn.log` etc.).
+- Confirm **Arkime Viewer** is reachable and sessions are indexed.
+- Hit an **OpenCanary** service (e.g., SSH/FTP/HTTP) and see an event.
 
 ---
 
-## Deployment
+## Configuration Checklist
 
-1.  **Review and Edit:** Complete all the configuration steps outlined above.
-2.  **Run the Script:** Execute the startup script from the root of the repository:
-    ```bash
-    sudo ./init-and-start_IDS_Honeypot.sh
-    ```
-3.  **Set Arkime Password:** Immediately after the script finishes, change the default Arkime password. **Do not forget this step.**
-    ```bash
-    sudo docker exec -it arkime-viewer /opt/arkime/bin/arkime_add_user.sh admin "Admin User" 'YOUR_NEW_SECURE_PASSWORD' --admin
-    ```
+### Global / Start Script
+
+- **macvlan**: set `subnet`, `gateway`, `parent` (host interface), and the network `name`.
+- **Container names**: decide on a consistent naming convention if you don’t use the defaults.
+
+### Suricata (`suricata-docker/`)
+
+- **Interface binding**: in `docker-compose.yml` (either `network_mode: host` or attach to your macvlan).
+- **Rules**: edit `local.rules`; set `HOME_NET` / `EXTERNAL_NET` in `suricata.yaml` to match your lab.
+- **Egress**: configure EVE output (JSON) and any log shipping (e.g., to ELK/Opensearch/Loki).
+
+**Example `local.rules` entry**
+
+```suricata
+alert http any any -> $HOME_NET any (msg:"LAB web shell attempt"; content:"cmd="; http_uri; classtype:web-application-attack; sid:1000001; rev:1;)
+```
+
+### Zeek (`zeek-docker/`)
+
+- **Interface**: set the monitored interface in `docker-compose.yml` or the Zeek command.
+- **Custom script(s)**: check `scripts/` (e.g., a `canary.zeek` script) for lab‑specific IPs or services and update them.
+- **Log path/rotation**: ensure persistent volumes and sensible retention.
+
+**Example compose excerpt**
+
+```yaml
+services:
+  zeek:
+    network_mode: host              # or attach to ids_macvlan
+    command: ["zeek", "-i", "enp3s0"]
+    volumes:
+      - ./logs:/usr/local/zeek/logs
+```
+
+### OpenCanary (`opencanary-docker/`)
+
+- **Names**: align container names in `docker-compose.yml` with node IDs in `.opencanary.conf`.
+- **Networks/IPs**: ensure services listen on your intended interface(s).
+- **Services**: explicitly enable/disable service emulations (SSH/FTP/HTTP, etc.) and configure banners/creds.
+
+**Example `.opencanary.conf` excerpt**
+
+```json
+{
+  "device.node_id": "lab-canary-01",
+  "logger": {"class": "PyLogger", "kwargs": {"formatters": {"plain": {"format": "%(message)s"}}}},
+  "ssh.enabled": true, "ftp.enabled": true, "http.enabled": true
+}
+```
+
+### Arkime (`arkime-docker/`)
+
+- **Datastore**: set the OpenSearch/Elasticsearch URL in `docker-compose.yml` and both `config.ini` files (viewer & capture).
+- **Interfaces**: configure capture interface(s) in the capture `config.ini`.
+- **Node name**: ensure the capture node name matches the value in the compose file.
+- **Storage**: allocate persistent volumes for PCAP and index metadata; set retention/size limits.
+
+**Example compose environment**
+
+```yaml
+services:
+  viewer:
+    environment:
+      - ES_HOST=http://opensearch:9200
+  capture:
+    environment:
+      - ES_HOST=http://opensearch:9200
+```
 
 ---
 
-## Disclaimer
+## Operations
 
-This project is a proof-of-concept and is provided as-is. It is a starting point for building a custom monitoring solution and is not designed to be a "turnkey" product. The user assumes all responsibility for securing and in maintaining their deployment.
+Common commands (run inside each component directory unless you centralize compose files):
+
+```bash
+# Start/Stop
+docker compose up -d
+docker compose down
+
+# Tail logs
+docker compose logs -f --tail=200
+
+# Update images & restart
+docker compose pull && docker compose up -d
+
+# List services & inspect networks
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}'
+docker network ls
+```
+
+**Verification**
+
+- **Suricata**: check `eve.json`/`fast.log` for alerts on generated traffic.
+- **Zeek**: verify `conn.log` growth and other protocol logs.
+- **OpenCanary**: connecting to an enabled port should create an event.
+- **Arkime**: the **viewer** should display sessions indexed in your datastore.
+
+---
+
+## Security Hardening Notes
+
+- **Segregate traffic**: prefer **macvlan** or dedicated NICs for capture. Keep management interfaces isolated.
+- **Least privilege**: drop capabilities, run as non‑root where possible, and use read‑only mounts for configs.
+- **Resource limits**: enforce CPU/memory limits per service; packet capture can be I/O heavy.
+- **Retention**: define log/PCAP rotation and index lifecycle policies to control growth.
+- **Exposure**: be deliberate when exposing OpenCanary to untrusted networks; isolate it from management.
+- **Telemetry**: forward Suricata EVE and Zeek logs to a SIEM or time‑series/log store; monitor Arkime index size.
+
+---
+
+## Troubleshooting
+
+- **“No packets captured.”** Confirm the correct interface, SPAN/TAP source, and that containers are attached to the macvlan (or using `network_mode: host` on the right NIC).
+- **“Arkime is empty.”** Verify OpenSearch/Elasticsearch connectivity/credentials and capture privileges on the interface.
+- **“No OpenCanary alerts.”** Ensure services are enabled in `.opencanary.conf` and reachable from your test source.
+- **“Suricata rules not firing.”** Align `HOME_NET`/`EXTERNAL_NET` CIDRs and test with predictable traffic (e.g., benign “bad” HTTP queries).
+
+---
+
+## FAQ
+
+**Q: Can I run everything with host networking instead of macvlan?**  
+A: Yes—many labs use `network_mode: host` for packet capture. macvlan is helpful when you want L2 isolation from the host bridge or to attach to distinct VLANs.
+
+**Q: Do I need to run OpenSearch/Elasticsearch in this repo?**  
+A: No, but Arkime needs a reachable datastore. You can run it separately or in a companion compose stack.
+
+**Q: Production‑ready?**  
+A: This repository is a PoC/lab scaffold. You should perform standard hardening, access control, logging, and monitoring before any production‑like use.
+
+---
+
+## Credits & License
+
+- Project structure and original guidance from the **Docker-IDS-Sensor** repository.
+- Each tool retains its own upstream license and documentation.
+
+> © 2025. Provided as‑is for educational and lab purposes.
